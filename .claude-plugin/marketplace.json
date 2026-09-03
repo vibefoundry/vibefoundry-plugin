@@ -1,0 +1,16 @@
+{
+  "name": "vibefoundry",
+  "description": "VibeFoundry: ask questions about data, build data apps that follow VibeFoundry's conventions, and open the local file viewer pane.",
+  "owner": {
+    "name": "VibeFoundry",
+    "url": "https://vibefoundry.ai"
+  },
+  "plugins": [
+    {
+      "name": "vibefoundry-toolkit",
+      "source": "./plugins/vibefoundry-toolkit",
+      "description": "Query public data and scaffold data apps that follow VibeFoundry's conventions.",
+      "category": "productivity"
+    }
+  ]
+}

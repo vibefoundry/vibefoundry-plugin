@@ -1,0 +1,13 @@
+{
+  "name": "vibefoundry-toolkit",
+  "version": "0.4.1",
+  "description": "Ask questions about public data, build data apps that follow VibeFoundry's conventions, and open the file viewer pane with one approval.",
+  "author": {
+    "name": "VibeFoundry",
+    "url": "https://vibefoundry.ai"
+  },
+  "homepage": "https://vibefoundry.ai",
+  "license": "MIT",
+  "keywords": ["data", "analytics", "dashboards", "templates"],
+  "mcpServers": "./.mcp.json"
+}

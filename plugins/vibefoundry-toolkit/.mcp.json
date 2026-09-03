@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "vibefoundry": {
+      "type": "http",
+      "url": "https://mcp-dev.vibefoundry.ai/mcp"
+    },
+    "vibefoundry-pane": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/pane.js"],
+      "env": { "VF_ORIGIN": "https://mcp-dev.vibefoundry.ai" }
+    }
+  }
+}
