@@ -5,12 +5,14 @@ This is the distribution repo for the VibeFoundry toolkit plugin. It holds only 
 ## Install
 
 ```bash
-claude plugin marketplace add vibefoundry/vibefoundry-plugin
+claude plugin marketplace add https://github.com/vibefoundry/vibefoundry-plugin.git
 ```
 
 ```bash
 claude plugin install vibefoundry-toolkit@vibefoundry
 ```
+
+The full HTTPS address matters: the short `owner/repo` form clones over SSH, which needs keys and is blocked on many networks.
 
 Then start a new Claude Code session in your project folder and say `giddy up`.
 
