@@ -16,15 +16,21 @@ The full HTTPS address matters: the short `owner/repo` form clones over SSH, whi
 
 Then start a new Claude Code session in your project folder and say `giddy up`.
 
+## Requirements
+
+Python 3.8 or newer. A Mac already has it. On Windows, say `giddy up` in a
+session and let `vf_install` set up Miniforge; it also tells the plugin where
+that Python lives. Then quit and reopen Claude once so it sees the change.
+
 ## Update
 
 ```bash
-claude plugin marketplace update vibefoundry
+claude plugin marketplace update vibefoundry && claude plugin update vibefoundry-toolkit@vibefoundry
 ```
 
 ## What is in here
 
 - `plugins/vibefoundry-toolkit/.mcp.json` - the hosted toolkit server and the local pane server.
-- `plugins/vibefoundry-toolkit/server/pane.js` - starts and stops the file viewer on your machine. It fetches the viewer from the hosted server and runs it on loopback. Your files never leave your computer.
+- `plugins/vibefoundry-toolkit/server/pane.py` - starts and stops the file viewer on your machine. It fetches the viewer from the hosted server and runs it on loopback. Your files never leave your computer.
 
 Nothing in this repo needs to be edited to use the plugin.

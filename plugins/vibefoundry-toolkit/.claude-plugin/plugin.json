@@ -1,6 +1,6 @@
 {
   "name": "vibefoundry-toolkit",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Ask questions about public data, build data apps that follow VibeFoundry's conventions, and open the file viewer pane with one approval.",
   "author": {
     "name": "VibeFoundry",

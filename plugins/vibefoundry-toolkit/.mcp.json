@@ -6,8 +6,8 @@
     },
     "vibefoundry-pane": {
       "type": "stdio",
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/server/pane.js"],
+      "command": "${VF_PYTHON:-python3}",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/pane.py"],
       "env": { "VF_ORIGIN": "https://mcp-dev.vibefoundry.ai" }
     }
   }
