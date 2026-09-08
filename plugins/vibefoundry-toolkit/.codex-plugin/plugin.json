@@ -34,7 +34,7 @@
       "Build a pipeline from my company's sales table"
     ],
     "brandColor": "#2070e8",
-    "composerIcon": "./assets/icon.png",
+    "composerIcon": "./assets/composer-icon.png",
     "logo": "./assets/logo.png"
   }
 }
