@@ -1,0 +1,17 @@
+{
+  "description": "Open the VibeFoundry pane when a session starts, so it is there before anyone asks.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${VF_PYTHON:-python3}\" \"${CLAUDE_PLUGIN_ROOT}/server/pane.py\" --open",
+            "timeout": 45
+          }
+        ]
+      }
+    ]
+  }
+}

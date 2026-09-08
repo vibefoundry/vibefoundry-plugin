@@ -33,9 +33,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 
-VERSION = "0.5.0"
+VERSION = "0.7.0"
 ORIGIN = os.environ.get("VF_ORIGIN", "https://mcp-dev.vibefoundry.ai").rstrip("/")
 WIN = os.name == "nt"
 USER_HOME = os.path.expanduser("~")
@@ -290,6 +292,68 @@ def status_panes():
     return {"running": running}
 
 
+# ------------------------------------------------------------------ portal --
+
+def tap_of(project_dir):
+    """The live tap's origin and token for this project - from the viewer we
+    started (or start it now). This is the address the model used to type by
+    hand from an old URL; it is never typed again."""
+    root = resolve_root(project_dir)
+    cur = read_registry().get(root)
+    url = cur["url"] if alive(cur) else open_pane(project_dir)["url"]
+    frag = url.split("#", 1)[1] if "#" in url else ""
+    q = urllib.parse.parse_qs(frag)
+    origin, token = q.get("tap", [""])[0], q.get("token", [""])[0]
+    if not origin or not token:
+        raise RuntimeError("the viewer URL carries no tap address")
+    return origin, token
+
+
+def tap_call(project_dir, path, method="GET", body=None, params=None):
+    """One request to the running tap, answered as (status, text)."""
+    origin, token = tap_of(project_dir)
+    qs = {"token": token}
+    qs.update({k: v for k, v in (params or {}).items() if v not in (None, "")})
+    url = origin + path + "?" + urllib.parse.urlencode(qs)
+    data = body.encode("utf-8") if isinstance(body, str) else body
+    req = urllib.request.Request(url, data=data, method=method)
+    if data is not None:
+        req.add_header("Content-Type", "text/plain; charset=utf-8")
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")
+
+
+SIGN_IN = ("Not signed in to the company portal. Ask the person to open the pane's Citizen Engineer "
+           "Portal tab and sign in (their normal work login), then call this again. Nothing else is "
+           "wrong, and nothing needs to be installed or pasted.")
+
+
+def portal_result(code, text, ok_note=""):
+    """Turn a tap answer into a tool result. Only a 409 means sign in - a 403
+    is a stale address, which cannot happen from here, and a 401 is an
+    expired session (sign in again)."""
+    if code == 409:
+        return failure(SIGN_IN)
+    if code == 401:
+        return failure("The portal sign-in expired (it lasts one hour). Ask the person to sign in again from the pane's Portal tab, then call this again.")
+    if code == 403:
+        return failure("The viewer refused the address; it may have restarted. Call this again.")
+    if code != 200:
+        return failure("The portal answered %d: %s" % (code, text[:600]))
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    return text_result((ok_note + "\n" if ok_note else "") + text[:200000], data if isinstance(data, dict) else {"result": data})
+
+
+def text_result(s, data):
+    return {"content": [{"type": "text", "text": s}], "structuredContent": data}
+
+
 # --------------------------------------------------------------------- MCP --
 
 OPEN_NOTE = (
@@ -338,15 +402,76 @@ TOOLS = [
             "type": "string", "description": "Absolute path of the project folder; omit to stop all."}}},
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     },
+    # The portal tools. This server holds the running viewer's address, so
+    # these need no placeholders and can never hit a stale token: the model
+    # used to assemble a curl by hand from an old URL, get 403 'bad token',
+    # and tell a signed-in person they were signed out.
+    {
+        "name": "vf_portal_status",
+        "title": "Is the company portal signed in?",
+        "description": ("Whether the running viewer holds a portal session for this project, and for whom. "
+                        "Call this before assuming anything about sign-in. Only 'linked: false' means the person "
+                        "must sign in (from the pane's Citizen Engineer Portal tab)."),
+        "inputSchema": {"type": "object", "properties": {"project_dir": {"type": "string", "description": "Absolute project folder; defaults to this session's."}}},
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "vf_portal_tables",
+        "title": "List the portal's tables (or one table's profile)",
+        "description": ("The person's private tables from their company portal - every table they may read, or with "
+                        "`table`, that table's full profile (columns, types, nulls, distinct counts, samples). Answered "
+                        "directly by this server through the running viewer: no command to run, no placeholders. Use "
+                        "THIS, never the hosted vf_portal_tables recipe, while this server is present. Call it at stage 1 "
+                        "of every build, before the public catalogue."),
+        "inputSchema": {"type": "object", "properties": {
+            "project_dir": {"type": "string", "description": "Absolute project folder; defaults to this session's."},
+            "table": {"type": "string", "description": "A table id, for that table's full profile."}}},
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "vf_portal_query",
+        "title": "Ask the portal a question (SQL)",
+        "description": ("One read-only SELECT (DuckDB dialect) against the person's private tables, answered through the "
+                        "running viewer. For ANSWERS: the reply is capped at 200,000 characters because an answer belongs "
+                        "in the conversation. To bring a table into an app use vf_portal_fetch, never this. Call "
+                        "vf_portal_tables first so the column names are real."),
+        "inputSchema": {"type": "object", "properties": {
+            "project_dir": {"type": "string", "description": "Absolute project folder; defaults to this session's."},
+            "sql": {"type": "string", "description": "One SELECT or WITH statement."}}, "required": ["sql"]},
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "vf_portal_fetch",
+        "title": "Bring a private table into an app",
+        "description": ("Land a private table - or a SQL slice of it - as a parquet in an app's raw_data/, streamed straight "
+                        "to disk by the running viewer: uncapped, refused if the hub would truncate it, with a .hub sidecar so "
+                        "the profiler does not re-read it. For served or shareable apps (Track 3/5); a Track 1 pipeline "
+                        "pulls in a step instead."),
+        "inputSchema": {"type": "object", "properties": {
+            "project_dir": {"type": "string", "description": "Absolute project folder; defaults to this session's."},
+            "app_dir": {"type": "string", "description": "The app folder, relative to the project root, e.g. app_folder/scripts/my_app."},
+            "table": {"type": "string", "description": "The table id."},
+            "sql": {"type": "string", "description": "Optional SELECT - only its result lands."},
+            "name": {"type": "string", "description": "Optional file name; defaults to <table>.parquet."}},
+            "required": ["app_dir", "table"]},
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
 ]
 
 INSTRUCTIONS = (
-    "This server starts and stops the VibeFoundry file viewer on this machine. When the "
-    "user asks to open the viewer or the pane, call vf_pane_open with the absolute project "
-    "folder, open the URL it returns in the in-app browser panel, say one short sentence, "
-    "and stop: never read, click, or screenshot inside the viewer (its consent card is the "
+    "This server starts and stops the VibeFoundry file viewer on this machine. THE PANE IS "
+    "OPEN IN EVERY SESSION, ALWAYS: at the start of a session, before anything else, if the "
+    "session-start hook handed you a viewer URL, open THAT URL in the in-app browser panel; "
+    "otherwise call vf_pane_open for the project folder and open the URL it returns. Then say "
+    "one short sentence and continue. Whenever the user asks to open the viewer or the pane, "
+    "do the same. Never read, click, or screenshot inside the viewer (its consent card is the "
     "person's to click) and never report ports, process ids, or status. Never launch the "
-    "viewer with a shell command while this server is present.")
+    "viewer with a shell command while this server is present. PORTAL CALLS - is the person "
+    "signed in, which private tables exist, a SQL answer, landing a table in an app - go through "
+    "THIS server's vf_portal_status / vf_portal_tables / vf_portal_query / vf_portal_fetch, which "
+    "talk to the running viewer directly. Never run the hosted portal recipes (curl with "
+    "<TAP-ORIGIN>/<TAP-TOKEN>) while this server is present: only a 'not signed in' answer from "
+    "these tools means the person must sign in.")
 
 
 def text(s, data):
@@ -371,6 +496,30 @@ def call_tool(params):
         if name == "vf_pane_stop":
             r = stop_panes(args.get("project_dir"))
             return text("Stopped the viewer for: " + ", ".join(r["stopped"]) if r["stopped"] else "No viewer was running.", r)
+        pd = args.get("project_dir")
+        if name == "vf_portal_status":
+            code, body = tap_call(pd, "/portal/status")
+            if code != 200:
+                return portal_result(code, body)
+            d = json.loads(body)
+            msg = ("Signed in as %s (expires %s)." % (d.get("email") or "?", d.get("expires") or "?")) if d.get("linked") \
+                else "Not signed in. The person signs in from the pane's Citizen Engineer Portal tab."
+            return text_result(msg, d)
+        if name == "vf_portal_tables":
+            code, body = tap_call(pd, "/portal/tables", params={"table": args.get("table")})
+            return portal_result(code, body)
+        if name == "vf_portal_query":
+            sql = str(args.get("sql") or "").strip()
+            if not sql:
+                return failure("sql is required")
+            code, body = tap_call(pd, "/portal/query", method="POST", body=sql)
+            return portal_result(code, body, "Answer (capped at 200,000 characters - use vf_portal_fetch to land a table):")
+        if name == "vf_portal_fetch":
+            code, body = tap_call(pd, "/portal/fetch", method="POST", body=str(args.get("sql") or ""),
+                                  params={"dir": args.get("app_dir"), "table": args.get("table"), "name": args.get("name")})
+            if code == 413:
+                return failure("The hub would have truncated that result, so nothing was saved. Narrow the SQL, aggregate further, or fetch the whole table and filter in the app.")
+            return portal_result(code, body, "Landed. Record it in app_manifest.json where a step reads it, and copy its columns and types from vf_portal_tables into `columns`.")
         return failure("Unknown tool: %s" % name)
     except Exception as e:
         log("tool", name, "failed:", e)
@@ -424,5 +573,35 @@ def main():
             send({"jsonrpc": "2.0", "id": mid, "error": {"code": getattr(e, "code", -32603), "message": str(e)}})
 
 
+def session_start():
+    """The SessionStart hook: start (or find) the viewer for the project and
+    hand the model its URL as context, so the pane is open in every session
+    without anyone remembering to ask. stdout IS the context - one message,
+    nothing else. Never fails the session: a problem is one calm line."""
+    if os.environ.get("VF_PANE_AUTO", "1") in ("0", "false", "no"):
+        return
+    root = os.environ.get("CLAUDE_PROJECT_DIR") or ""
+    try:
+        hook = json.loads(sys.stdin.read() or "{}")
+        root = root or hook.get("cwd") or ""
+    except Exception:
+        pass
+    root = root or os.getcwd()
+    try:
+        r = open_pane(root)
+        print("VibeFoundry pane is running for this project. FIRST, before anything else, open this "
+              "URL in the in-app browser panel (everything after '#' included), say 'Starting the local "
+              "file viewer - your files stay on your machine.' and one short sentence, then continue with "
+              "the user's request. Never read, click, or screenshot inside it, never report ports or "
+              "process ids, and never launch the viewer with a shell command.\nURL: " + r["url"])
+    except Exception as e:
+        log("session start:", e)
+        print("The VibeFoundry pane could not start on its own (" + str(e)[:120] + "). When the user wants "
+              "the viewer, call vf_pane_open; never download or run a launcher.")
+
+
 if __name__ == "__main__":
-    main()
+    if "--open" in sys.argv[1:]:
+        session_start()
+    else:
+        main()
