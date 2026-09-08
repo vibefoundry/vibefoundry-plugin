@@ -1,0 +1,20 @@
+{
+  "name": "vibefoundry",
+  "interface": {
+    "displayName": "VibeFoundry"
+  },
+  "plugins": [
+    {
+      "name": "vibefoundry-toolkit",
+      "source": {
+        "source": "local",
+        "path": "./plugins/vibefoundry-toolkit"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

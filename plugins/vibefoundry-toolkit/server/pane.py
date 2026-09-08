@@ -37,13 +37,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 ORIGIN = os.environ.get("VF_ORIGIN", "https://mcp-dev.vibefoundry.ai").rstrip("/")
 WIN = os.name == "nt"
 USER_HOME = os.path.expanduser("~")
 HOME = os.path.join(USER_HOME, ".vibefoundry")
 TAP = os.path.join(HOME, "vf_tap.py")
 REGISTRY = os.path.join(HOME, "panes.json")
+LOCK = os.path.join(HOME, "panes.lock")
 READY_TIMEOUT = 25.0
 
 
@@ -249,18 +250,52 @@ def start_tap(root):
     return {"url": url, "pid": child.pid, "source": source}
 
 
+def lock():
+    """One launcher at a time across processes: the session-start hook and
+    the server (or two hooks) must not each start a viewer for one folder.
+    A lock older than a minute is a crashed holder and is taken over."""
+    os.makedirs(HOME, exist_ok=True)
+    end = time.time() + READY_TIMEOUT + 5
+    while True:
+        try:
+            os.close(os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(LOCK) > 60:
+                    os.unlink(LOCK)
+                    continue
+            except OSError:
+                continue
+            if time.time() > end:
+                return
+            time.sleep(0.2)
+
+
+def unlock():
+    try:
+        os.unlink(LOCK)
+    except OSError:
+        pass
+
+
 def open_pane(project_dir):
     root = resolve_root(project_dir)
-    reg = read_registry()
-    cur = reg.get(root)
-    if alive(cur):
-        return {"project_dir": root, "url": cur["url"], "reused": True}
-    if cur:
-        kill_pid(cur.get("pid"))
-    t = start_tap(root)
-    reg[root] = {"url": t["url"], "pid": t["pid"], "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
-    write_registry(reg)
-    return {"project_dir": root, "url": t["url"], "reused": False}
+    lock()
+    try:
+        reg = read_registry()
+        cur = reg.get(root)
+        if alive(cur):
+            return {"project_dir": root, "url": cur["url"], "reused": True}
+        if cur:
+            kill_pid(cur.get("pid"))
+        t = start_tap(root)
+        reg = read_registry()
+        reg[root] = {"url": t["url"], "pid": t["pid"], "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        write_registry(reg)
+        return {"project_dir": root, "url": t["url"], "reused": False}
+    finally:
+        unlock()
 
 
 def stop_panes(project_dir):

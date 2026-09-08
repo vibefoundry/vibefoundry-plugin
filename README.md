@@ -1,8 +1,26 @@
-# VibeFoundry plugin for Claude Code
+# VibeFoundry plugin for Claude Code and Codex
 
-This is the distribution repo for the VibeFoundry toolkit plugin. It holds only what your machine needs to connect: the plugin manifest, the server addresses, and a small launcher for the local file viewer. Everything else runs on VibeFoundry's servers.
+This is the distribution repo for the VibeFoundry toolkit plugin. It holds only what your machine needs to connect: the plugin manifests, the server addresses, and a small launcher for the local file viewer. Everything else runs on VibeFoundry's servers. One repo serves both hosts: Claude reads `.claude-plugin/`, Codex reads `.agents/plugins/` and `.codex-plugin/`.
 
-## Install
+## Install in Codex
+
+In the Codex app open Plugins, choose to add a marketplace, and paste
+`vibefoundry/vibefoundry-plugin` (or the full URL below). Then install
+**VibeFoundry** from the `vibefoundry` marketplace. From a terminal it is:
+
+```bash
+codex plugin marketplace add https://github.com/vibefoundry/vibefoundry-plugin.git
+```
+
+```bash
+codex plugin add vibefoundry-toolkit@vibefoundry
+```
+
+Codex runs commands with the network off, which blocks both the viewer and the
+hub your pipelines pull from. Say `giddy up` once and let `vf_install` set
+`network_access = true` in `~/.codex/config.toml`, then restart Codex.
+
+## Install in Claude Code
 
 ```bash
 claude plugin marketplace add https://github.com/vibefoundry/vibefoundry-plugin.git
@@ -37,7 +55,8 @@ claude plugin marketplace update vibefoundry && claude plugin update vibefoundry
 
 ## What is in here
 
-- `plugins/vibefoundry-toolkit/.mcp.json` - the hosted toolkit server and the local pane server.
+- `plugins/vibefoundry-toolkit/.mcp.json` - the hosted toolkit server and the local pane server (Claude); `.mcp.codex.json` is the same pair in Codex's shape.
+- `plugins/vibefoundry-toolkit/.codex-plugin/plugin.json` and `.agents/plugins/marketplace.json` - the Codex manifests.
 - `plugins/vibefoundry-toolkit/hooks/hooks.json` - opens the pane at the start of every session.
 - The pane server also answers the company-portal calls (tables, queries, landing a table) directly, through the viewer it started - so being signed in is never mistaken for being signed out.
 - `plugins/vibefoundry-toolkit/server/pane.py` - starts and stops the file viewer on your machine. It fetches the viewer from the hosted server and runs it on loopback. Your files never leave your computer.
