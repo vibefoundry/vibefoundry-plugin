@@ -37,7 +37,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 ORIGIN = os.environ.get("VF_ORIGIN", "https://mcp-dev.vibefoundry.ai").rstrip("/")
 WIN = os.name == "nt"
 USER_HOME = os.path.expanduser("~")
@@ -456,11 +456,24 @@ TOOLS = [
             "required": ["app_dir", "table"]},
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     },
+    {
+        "name": "vf_portal_credential",
+        "title": "Write an app's portal credential (.env)",
+        "description": ("Mint an app credential for this app - scoped to the tables its hub pull steps name - and "
+                        "write VF_GATEWAY / VF_APP_ID / VF_APP_KEY into the app's .env, through the running viewer. "
+                        "The viewer already does this on its own when it sees a hub pull in the plan and the person "
+                        "is signed in; call this only to do it now, or to confirm. Requires a signed-in portal session "
+                        "and a plan with at least one hub pull step."),
+        "inputSchema": {"type": "object", "properties": {
+            "project_dir": {"type": "string", "description": "Absolute project folder; defaults to this session's."},
+            "app_dir": {"type": "string", "description": "The app folder, relative to the project root."}}, "required": ["app_dir"]},
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
 ]
 
 INSTRUCTIONS = (
-    "This server starts and stops the VibeFoundry file viewer on this machine. THE PANE IS "
-    "OPEN IN EVERY SESSION, ALWAYS: at the start of a session, before anything else, if the "
+    "This server starts and stops the VibeFoundry file viewer on this machine. "
+    "THE PANE IS OPEN IN EVERY SESSION, ALWAYS: at the start of a session, before anything else, if the "
     "session-start hook handed you a viewer URL, open THAT URL in the in-app browser panel; "
     "otherwise call vf_pane_open for the project folder and open the URL it returns. Then say "
     "one short sentence and continue. Whenever the user asks to open the viewer or the pane, "
@@ -514,6 +527,11 @@ def call_tool(params):
                 return failure("sql is required")
             code, body = tap_call(pd, "/portal/query", method="POST", body=sql)
             return portal_result(code, body, "Answer (capped at 200,000 characters - use vf_portal_fetch to land a table):")
+        if name == "vf_portal_credential":
+            code, body = tap_call(pd, "/portal/credential", method="POST", params={"dir": args.get("app_dir")})
+            if code == 400:
+                return failure("This app's plan declares no hub pull step yet, so no credential is needed. Declare the pull step first.")
+            return portal_result(code, body, "The app's .env now holds its portal credential; gateway.pull() in the pull step will use it.")
         if name == "vf_portal_fetch":
             code, body = tap_call(pd, "/portal/fetch", method="POST", body=str(args.get("sql") or ""),
                                   params={"dir": args.get("app_dir"), "table": args.get("table"), "name": args.get("name")})
