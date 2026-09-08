@@ -9,7 +9,12 @@
   "homepage": "https://vibefoundry.ai",
   "repository": "https://github.com/vibefoundry/vibefoundry-plugin",
   "license": "MIT",
-  "keywords": ["data", "analytics", "dashboards", "templates"],
+  "keywords": [
+    "data",
+    "analytics",
+    "dashboards",
+    "templates"
+  ],
   "mcpServers": "./.mcp.codex.json",
   "hooks": "./hooks/codex.json",
   "interface": {
@@ -18,12 +23,18 @@
     "longDescription": "VibeFoundry answers questions about the data in a hub and computes the exact structure a data application should have. A local pane shows your project's files and the plan as a chart; sign in to your company's hub from it to use private tables. Nothing about your project leaves your machine.",
     "developerName": "VibeFoundry",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "websiteURL": "https://vibefoundry.ai",
     "defaultPrompt": [
       "giddy up",
       "What public datasets can VibeFoundry query?",
       "Build a pipeline from my company's sales table"
-    ]
+    ],
+    "brandColor": "#2070e8",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png"
   }
 }
