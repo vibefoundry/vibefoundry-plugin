@@ -29,6 +29,8 @@ diagnostics go to stderr.
 """
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,7 +39,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.8.1"
+VERSION = "0.9.0"
 ORIGIN = os.environ.get("VF_ORIGIN", "https://mcp-dev.vibefoundry.ai").rstrip("/")
 WIN = os.name == "nt"
 USER_HOME = os.path.expanduser("~")
@@ -87,6 +89,68 @@ def interpreter():
         except Exception:
             continue
     raise RuntimeError("No Python 3.8 or newer was found on this machine. Run VibeFoundry's install tool once (vf_install), then try again.")
+
+
+# ------------------------------------------------------------- environment --
+
+_ENV = None
+
+
+def host():
+    """Which assistant started this server: VF_HOST from the plugin's server
+    config, or --host from the hook command. Unknown means no host-specific
+    check is made."""
+    if "--host" in sys.argv:
+        i = sys.argv.index("--host")
+        if i + 1 < len(sys.argv):
+            return sys.argv[i + 1].strip().lower()
+    return (os.environ.get("VF_HOST") or "").strip().lower()
+
+
+def _runs(cmd, timeout=15):
+    try:
+        return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout).returncode == 0
+    except Exception:
+        return False
+
+
+def environment():
+    """What this machine has, as facts, checked once per process.
+
+    The model used to be handed these as shell commands to run and read; a
+    failed check was then reported as a pass. Now the server that already
+    starts the viewer answers - under the same interpreter rule the viewer and
+    every pipeline step inherit - and the model has one line to repeat, or
+    nothing to say."""
+    global _ENV
+    if _ENV:
+        return _ENV
+    present, missing = [], []
+    try:
+        py = interpreter()
+        v = subprocess.run([py, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+                           capture_output=True, text=True, timeout=8).stdout.strip()
+        present.append("Python " + v)
+        (present if _runs([py, "-c", "import polars"], 25) else missing).append("Polars")
+    except Exception:
+        py = ""
+        missing.extend(["Python", "Polars"])
+    for name, exe in (("git", "git"), ("Node", "node")):
+        (present if shutil.which(exe) and _runs([exe, "--version"]) else missing).append(name)
+    h = host()
+    if h == "codex":
+        cfg = os.path.join(USER_HOME, ".codex", "config.toml")
+        try:
+            on = os.path.isfile(cfg) and re.search(r"^\s*network_access\s*=\s*true", open(cfg, encoding="utf-8").read(), re.M)
+        except Exception:
+            on = False
+        (present if on else missing).append("Codex sandbox network")
+    if missing:
+        line = "Environment: MISSING " + ", ".join(missing) + ". Present: " + ", ".join(present) + "."
+    else:
+        line = "Environment: " + ", ".join(present) + " - all present."
+    _ENV = {"present": present, "missing": missing, "python": py, "host": h or "unknown", "line": line}
+    return _ENV
 
 
 # --------------------------------------------------------------------- tap --
@@ -398,6 +462,11 @@ OPEN_NOTE = (
     "contents, ports, process ids, or status. The viewer runs on this machine only and exits after "
     "30 idle minutes.")
 
+ENV_NOTE = (
+    "This line IS the environment check - never run one yourself. Nothing missing: say nothing about "
+    "the environment. Something missing: one sentence naming it and offering vf_install (Node only "
+    "matters once a front end is being built).")
+
 TOOLS = [
     {
         "name": "vf_pane_open",
@@ -519,7 +588,12 @@ INSTRUCTIONS = (
     "THIS server's vf_portal_status / vf_portal_tables / vf_portal_query / vf_portal_fetch, which "
     "talk to the running viewer directly. Never run the hosted portal recipes (curl with "
     "<TAP-ORIGIN>/<TAP-TOKEN>) while this server is present: only a 'not signed in' answer from "
-    "these tools means the person must sign in.")
+    "these tools means the person must sign in. THE ENVIRONMENT IS ALREADY CHECKED: this server probes "
+    "the machine when it starts the viewer - Python, Polars under the Python the plugin uses, git, Node, "
+    "and on Codex its sandbox network - and hands the result over as an 'Environment:' line in the "
+    "session-start hook context and in vf_pane_open / vf_pane_status. Read that line; never run a "
+    "check yourself. Nothing missing: say nothing about it. Something missing: one sentence naming "
+    "it and offering vf_install.")
 
 
 def text(s, data):
@@ -536,11 +610,14 @@ def call_tool(params):
     try:
         if name == "vf_pane_open":
             r = open_pane(args.get("project_dir"))
+            r["environment"] = environment()
             return text(("The viewer for this folder is already running. " if r["reused"] else "Pane ready. ")
-                        + OPEN_NOTE + "\nURL: " + r["url"], r)
+                        + OPEN_NOTE + "\nURL: " + r["url"] + "\n" + r["environment"]["line"] + " " + ENV_NOTE, r)
         if name == "vf_pane_status":
             r = status_panes()
-            return text("\n".join(p["project_dir"] + " -> " + p["url"] for p in r["running"]) or "No viewer is running.", r)
+            r["environment"] = environment()
+            return text(("\n".join(p["project_dir"] + " -> " + p["url"] for p in r["running"]) or "No viewer is running.")
+                        + "\n" + r["environment"]["line"], r)
         if name == "vf_pane_stop":
             r = stop_panes(args.get("project_dir"))
             return text("Stopped the viewer for: " + ", ".join(r["stopped"]) if r["stopped"] else "No viewer was running.", r)
@@ -646,7 +723,8 @@ def session_start():
               "URL in the in-app browser panel (everything after '#' included), say 'Starting the local "
               "file viewer - your files stay on your machine.' and one short sentence, then continue with "
               "the user's request. Never read, click, or screenshot inside it, never report ports or "
-              "process ids, and never launch the viewer with a shell command.\nURL: " + r["url"])
+              "process ids, and never launch the viewer with a shell command.\nURL: " + r["url"]
+              + "\n" + environment()["line"] + " " + ENV_NOTE)
     except Exception as e:
         log("session start:", e)
         print("The VibeFoundry pane could not start on its own (" + str(e)[:120] + "). When the user wants "

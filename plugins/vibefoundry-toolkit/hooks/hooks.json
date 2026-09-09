@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${VF_PYTHON:-python3}\" \"${CLAUDE_PLUGIN_ROOT}/server/pane.py\" --open",
+            "command": "\"${VF_PYTHON:-python3}\" \"${CLAUDE_PLUGIN_ROOT}/server/pane.py\" --open --host claude",
             "timeout": 45
           }
         ]

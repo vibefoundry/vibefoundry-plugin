@@ -5,9 +5,14 @@
     },
     "vibefoundry-pane": {
       "command": "python3",
-      "args": ["server/pane.py"],
+      "args": [
+        "server/pane.py"
+      ],
       "cwd": ".",
-      "env": { "VF_ORIGIN": "https://mcp-dev.vibefoundry.ai" }
+      "env": {
+        "VF_ORIGIN": "https://mcp-dev.vibefoundry.ai",
+        "VF_HOST": "codex"
+      }
     }
   }
 }

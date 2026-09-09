@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${PLUGIN_ROOT}/server/pane.py --open",
+            "command": "python3 ${PLUGIN_ROOT}/server/pane.py --open --host codex",
             "statusMessage": "Starting the VibeFoundry pane",
             "timeout": 45
           }

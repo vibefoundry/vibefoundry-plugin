@@ -7,8 +7,13 @@
     "vibefoundry-pane": {
       "type": "stdio",
       "command": "${VF_PYTHON:-python3}",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/server/pane.py"],
-      "env": { "VF_ORIGIN": "https://mcp-dev.vibefoundry.ai" }
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server/pane.py"
+      ],
+      "env": {
+        "VF_ORIGIN": "https://mcp-dev.vibefoundry.ai",
+        "VF_HOST": "claude"
+      }
     }
   }
 }
