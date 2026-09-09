@@ -39,7 +39,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 ORIGIN = os.environ.get("VF_ORIGIN", "https://mcp-dev.vibefoundry.ai").rstrip("/")
 WIN = os.name == "nt"
 USER_HOME = os.path.expanduser("~")
@@ -343,6 +343,53 @@ def unlock():
         pass
 
 
+PANE_NAME = (os.environ.get("VF_PANE_NAME") or "VibeFoundry").strip()
+
+
+def origin_of(url):
+    return urllib.parse.parse_qs(urllib.parse.urlparse(url).fragment).get("tap", [""])[0].rstrip("/")
+
+
+def write_launch_entry(root, url):
+    """Claude's desktop app draws a preview card - the one with the Open
+    button - only for a NAMED preview from the project's .claude/launch.json.
+    So on Claude the viewer gets one attach-only entry there (a name and the
+    viewer's origin, no command: nothing is started by the app), rewritten
+    every time because the port changes. Other entries are left alone. The
+    origin carries no token; the assistant navigates the tab to the real URL
+    right after preview_start. Codex has no such file and gets none."""
+    if host() != "claude":
+        return None
+    origin = origin_of(url)
+    if not origin:
+        return None
+    d = os.path.join(root, ".claude")
+    p = os.path.join(d, "launch.json")
+    try:
+        cfg = json.load(open(p, encoding="utf-8")) if os.path.isfile(p) else {}
+    except Exception:
+        cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    cfg.setdefault("version", "0.0.1")
+    confs = [c for c in (cfg.get("configurations") or []) if isinstance(c, dict) and c.get("name") != PANE_NAME]
+    entry = {"name": PANE_NAME, "url": origin}
+    if any(c.get("name") == PANE_NAME and c.get("url") == origin for c in (cfg.get("configurations") or [])) and os.path.isfile(p):
+        return PANE_NAME
+    cfg["configurations"] = confs + [entry]
+    try:
+        os.makedirs(d, exist_ok=True)
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, p)
+    except Exception as e:
+        log("launch.json:", e)
+        return None
+    return PANE_NAME
+
+
 def open_pane(project_dir):
     root = resolve_root(project_dir)
     lock()
@@ -350,16 +397,31 @@ def open_pane(project_dir):
         reg = read_registry()
         cur = reg.get(root)
         if alive(cur):
-            return {"project_dir": root, "url": cur["url"], "reused": True}
-        if cur:
-            kill_pid(cur.get("pid"))
-        t = start_tap(root)
-        reg = read_registry()
-        reg[root] = {"url": t["url"], "pid": t["pid"], "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
-        write_registry(reg)
-        return {"project_dir": root, "url": t["url"], "reused": False}
+            r = {"project_dir": root, "url": cur["url"], "reused": True}
+        else:
+            if cur:
+                kill_pid(cur.get("pid"))
+            t = start_tap(root)
+            reg = read_registry()
+            reg[root] = {"url": t["url"], "pid": t["pid"], "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            write_registry(reg)
+            r = {"project_dir": root, "url": t["url"], "reused": False}
+        r["preview"] = write_launch_entry(root, r["url"])
+        return r
     finally:
         unlock()
+
+
+def open_steps(r):
+    """The words that open the pane, for the hook context and vf_pane_open
+    alike. Claude: preview_start on the named entry (the card), then navigate
+    the tab to the real URL. Everywhere else: open the URL in the panel."""
+    if r.get("preview"):
+        return ("FIRST call preview_start with name '" + r["preview"] + "' - it attaches the in-app browser panel "
+                "to the running viewer and puts a preview card with an Open button in the chat; nothing is started. "
+                "THEN call navigate on that tab with this exact URL, everything after '#' included, so the panel "
+                "shows the viewer itself. ")
+    return "Open this URL in the in-app browser panel, everything after '#' included. "
 
 
 def stop_panes(project_dir):
@@ -456,7 +518,7 @@ def text_result(s, data):
 # --------------------------------------------------------------------- MCP --
 
 OPEN_NOTE = (
-    "Open this URL in the in-app browser panel, everything after '#' included, then say ONE short "
+    "Then say ONE short "
     "sentence to the person and STOP. The page shows a consent card that is the PERSON's to click: "
     "never click, read, screenshot, or drive anything inside the viewer, and do not describe its "
     "contents, ports, process ids, or status. The viewer runs on this machine only and exits after "
@@ -477,8 +539,10 @@ TOOLS = [
             "its URL. Call this whenever the user asks to open the viewer, the pane, or to look at a "
             "data file. Use it INSTEAD of any shell command from vf_pane - never download or run a "
             "launcher when this tool exists. Say 'Starting the local file viewer - your files stay "
-            "on your machine.' first, then open the returned URL (everything after '#' included) in "
-            "the in-app browser panel; use the default browser only if this client has no panel. "
+            "on your machine.' first, then follow the result's text: on Claude, preview_start on the "
+            "named launch.json entry it wrote (the preview card), then navigate that tab to the returned "
+            "URL (everything after '#' included); elsewhere open the URL in the in-app browser panel; "
+            "use the default browser only if this client has no panel. "
             "Then say ONE short sentence and STOP: do not read the page, do not click its consent card "
             "or anything else in it (that is the person's click), do not screenshot it, and do not "
             "report ports, process ids, or status. NEVER open /viewer without the exact returned URL: "
@@ -578,8 +642,9 @@ TOOLS = [
 INSTRUCTIONS = (
     "This server starts and stops the VibeFoundry file viewer on this machine. "
     "THE PANE IS OPEN IN EVERY SESSION, ALWAYS: at the start of a session, before anything else, if the "
-    "session-start hook handed you a viewer URL, open THAT URL in the in-app browser panel; "
-    "otherwise call vf_pane_open for the project folder and open the URL it returns. Then say "
+    "session-start hook handed you a viewer URL, do what its text says (on Claude: preview_start on the "
+    "named launch.json entry, which puts the preview card in the chat, then navigate that tab to the "
+    "URL); otherwise call vf_pane_open for the project folder and follow its text the same way. Then say "
     "one short sentence and continue. Whenever the user asks to open the viewer or the pane, "
     "do the same. Never read, click, or screenshot inside the viewer (its consent card is the "
     "person's to click) and never report ports, process ids, or status. Never launch the "
@@ -612,7 +677,7 @@ def call_tool(params):
             r = open_pane(args.get("project_dir"))
             r["environment"] = environment()
             return text(("The viewer for this folder is already running. " if r["reused"] else "Pane ready. ")
-                        + OPEN_NOTE + "\nURL: " + r["url"] + "\n" + r["environment"]["line"] + " " + ENV_NOTE, r)
+                        + open_steps(r) + OPEN_NOTE + "\nURL: " + r["url"] + "\n" + r["environment"]["line"] + " " + ENV_NOTE, r)
         if name == "vf_pane_status":
             r = status_panes()
             r["environment"] = environment()
@@ -719,12 +784,11 @@ def session_start():
     root = root or os.getcwd()
     try:
         r = open_pane(root)
-        print("VibeFoundry pane is running for this project. FIRST, before anything else, open this "
-              "URL in the in-app browser panel (everything after '#' included), say 'Starting the local "
-              "file viewer - your files stay on your machine.' and one short sentence, then continue with "
-              "the user's request. Never read, click, or screenshot inside it, never report ports or "
-              "process ids, and never launch the viewer with a shell command.\nURL: " + r["url"]
-              + "\n" + environment()["line"] + " " + ENV_NOTE)
+        print("VibeFoundry pane is running for this project. Before anything else: " + open_steps(r)
+              + "Say 'Starting the local file viewer - your files stay on your machine.' and one short "
+              "sentence, then continue with the user's request. Never read, click, or screenshot inside "
+              "it, never report ports or process ids, and never launch the viewer with a shell command.\nURL: "
+              + r["url"] + "\n" + environment()["line"] + " " + ENV_NOTE)
     except Exception as e:
         log("session start:", e)
         print("The VibeFoundry pane could not start on its own (" + str(e)[:120] + "). When the user wants "

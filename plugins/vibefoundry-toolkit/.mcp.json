@@ -12,7 +12,8 @@
       ],
       "env": {
         "VF_ORIGIN": "https://mcp-dev.vibefoundry.ai",
-        "VF_HOST": "claude"
+        "VF_HOST": "claude",
+        "VF_PANE_NAME": "VibeFoundry"
       }
     }
   }
