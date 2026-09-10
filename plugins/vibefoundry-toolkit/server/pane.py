@@ -40,7 +40,7 @@ import urllib.parse
 import zlib
 import urllib.request
 
-VERSION = "0.9.3"
+VERSION = "0.9.4"
 ORIGIN = os.environ.get("VF_ORIGIN", "https://mcp-dev.vibefoundry.ai").rstrip("/")
 WIN = os.name == "nt"
 USER_HOME = os.path.expanduser("~")
@@ -756,12 +756,13 @@ TOOLS = [
 
 INSTRUCTIONS = (
     "This server starts and stops the VibeFoundry file viewer on this machine. "
-    "THE PANE IS OPEN IN EVERY SESSION, ALWAYS: at the start of a session, before anything else, if the "
+    "THE PANE OPENS ONLY WHEN IT IS WANTED: when the person asks about the data in their company's "
+    "hub, asks to build something, says 'launch' or 'giddy up', or asks for the viewer or the pane. "
+    "For any other message say nothing about it and open nothing. When it is wanted: if the "
     "session-start hook handed you a viewer URL, do what its text says (on Claude: preview_start on the "
     "named launch.json entry, which puts the preview card in the chat, then navigate that tab to the "
     "URL); otherwise call vf_pane_open for the project folder and follow its text the same way. Then say "
-    "one short sentence and continue. Whenever the user asks to open the viewer or the pane, "
-    "do the same. Never read, click, or screenshot inside the viewer (its consent card is the "
+    "one short sentence and continue. Never read, click, or screenshot inside the viewer (its consent card is the "
     "person's to click) and never report ports, process ids, or status. Never launch the "
     "viewer with a shell command while this server is present. PORTAL CALLS - is the person "
     "signed in, which private tables exist, a SQL answer, landing a table in an app - go through "
@@ -909,9 +910,11 @@ def session_start():
     root = root or os.getcwd()
     try:
         r = open_pane(root)
-        print("VibeFoundry pane is running for this project. Before anything else: " + open_steps(r)
+        print("VibeFoundry pane is running for this project, in the background. DO NOT open it now and say "
+              "nothing about it. Open it ONLY when the person asks about the data in their company's hub, "
+              "asks to build something, or says 'launch' or 'giddy up' - then: " + open_steps(r)
               + "Say 'Starting the local file viewer - your files stay on your machine.' and one short "
-              "sentence, then continue with the user's request. Never read, click, or screenshot inside "
+              "sentence, then continue with their request. Never read, click, or screenshot inside "
               "it, never report ports or process ids, and never launch the viewer with a shell command.\nURL: "
               + r["url"] + "\n" + environment()["line"] + " " + ENV_NOTE + perms_line(r))
     except Exception as e:

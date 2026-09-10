@@ -7,7 +7,7 @@ description: The front door. Use whenever the person says "launch", "giddy up", 
 
 The person wants to start. This is the whole script. Do not add to it, and do not narrate it.
 
-1. **The pane is already open.** The session-start hook started the viewer and told you how to show it: on Claude, `preview_start` on the named launch.json entry, which puts the preview card with its Open button in the chat, then `navigate` that tab to the viewer's URL. If that has not happened this session, call `vf_pane_open` and follow its text. Either way: at most one sentence about the viewer, and never a description of what it shows.
+1. **Open the pane now.** The session-start hook started the viewer in the background and told you how to show it; this is the moment to do it: on Claude, `preview_start` on the named launch.json entry, which puts the preview card with its Open button in the chat, then `navigate` that tab to the viewer's URL. If that has not happened this session, call `vf_pane_open` and follow its text. Either way: at most one sentence about the viewer, and never a description of what it shows.
 
 2. **Ask who is signed in.** Call `vf_portal_status` on the pane server. It says whether the person is signed in and to which hub. That is the only fact you need from it.
 
