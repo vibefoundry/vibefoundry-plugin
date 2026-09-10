@@ -259,7 +259,7 @@ BUILD_COMMANDS = ["python", "python3", "py", "pip", "pip3", "conda", "npm", "npx
 
 def plugin_name():
     """The plugin this server ships in, read from its own manifest two folders
-    up - so the stamped clones (pronghorn-ai, diageo-ai-foundry) name their
+    up - so the stamped clones (vibefoundry-ai, diageo-ai-foundry) name their
     own servers without anyone typing them."""
     try:
         mp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".claude-plugin", "plugin.json")
