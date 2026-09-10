@@ -40,7 +40,7 @@ import urllib.parse
 import zlib
 import urllib.request
 
-VERSION = "0.9.4"
+VERSION = "0.9.5"
 ORIGIN = os.environ.get("VF_ORIGIN", "https://mcp-dev.vibefoundry.ai").rstrip("/")
 WIN = os.name == "nt"
 USER_HOME = os.path.expanduser("~")
@@ -115,6 +115,90 @@ def _runs(cmd, timeout=15):
         return False
 
 
+def _vkey(name):
+    return tuple(int(x) if x.isdigit() else 0 for x in name.split("."))
+
+
+def claude_bin():
+    """The Claude CLI on this machine: on PATH first, then the copy the desktop
+    app bundles (newest version). The same search codegen makes, so the binary
+    this server signs in is the one codegen will run."""
+    c = shutil.which("claude")
+    if c:
+        return c
+    cands = [os.path.join(USER_HOME, ".claude", "local", "claude"), os.path.join(USER_HOME, ".claude", "local", "bin", "claude")]
+    roots = [os.path.join(USER_HOME, "Library", "Application Support", "Claude", "claude-code")]
+    if os.environ.get("LOCALAPPDATA"):
+        roots.append(os.path.join(os.environ["LOCALAPPDATA"], "Claude", "claude-code"))
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for v in sorted(os.listdir(root), key=_vkey, reverse=True):
+            for rel in (os.path.join("claude.app", "Contents", "MacOS", "claude"), "claude.exe", "claude"):
+                cands.append(os.path.join(root, v, rel))
+    for c in cands:
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return ""
+
+
+def claude_signed_in(bin_):
+    """One command, one field: `claude auth status --json` -> loggedIn."""
+    if not bin_:
+        return False
+    try:
+        r = subprocess.run([bin_, "auth", "status", "--json"], capture_output=True, text=True, timeout=20)
+        return bool(json.loads(r.stdout or "{}").get("loggedIn"))
+    except Exception:
+        return False
+
+
+def claude_login(timeout=150):
+    """Sign the Claude CLI in for the person: run its own `auth login`, which
+    opens the browser and finishes on its own; poll `auth status` until it says
+    so. If the CLI insists on a terminal, open one running the same command.
+    Nothing is typed by anyone; the person clicks Allow in the browser."""
+    global _ENV
+    b = claude_bin()
+    if not b:
+        return {"signed_in": False, "why": "No Claude CLI on this machine - install it first (vf_install), then try again."}
+    if claude_signed_in(b):
+        return {"signed_in": True, "already": True, "claude_bin": b}
+    proc, fell_back = None, False
+    try:
+        proc = subprocess.Popen([b, "auth", "login"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    except Exception as e:
+        return {"signed_in": False, "why": "Could not start the Claude sign-in: %s" % e}
+    start = time.time()
+    while time.time() - start < timeout:
+        time.sleep(3)
+        if claude_signed_in(b):
+            try: proc.terminate()
+            except Exception: pass
+            _ENV = None
+            return {"signed_in": True, "claude_bin": b, "terminal": fell_back}
+        if proc is not None and proc.poll() is not None and not fell_back:
+            # it ended without signing in - most likely it wanted a terminal
+            fell_back = True
+            try:
+                if sys.platform == "darwin":
+                    cmd = os.path.join(tempfile.gettempdir(), "vf_claude_login.command")
+                    with open(cmd, "w") as f:
+                        f.write("#!/bin/bash\n%s auth login\nexit\n" % ('"' + b + '"'))
+                    os.chmod(cmd, 0o755)
+                    subprocess.Popen(["open", "-a", "Terminal", cmd])
+                elif WIN:
+                    subprocess.Popen(["cmd", "/c", "start", "Claude sign-in", "cmd", "/c", b, "auth", "login"])
+                else:
+                    subprocess.Popen(["x-terminal-emulator", "-e", b, "auth", "login"])
+            except Exception as e:
+                return {"signed_in": False, "why": "The sign-in needs a terminal and none could be opened: %s" % e}
+            proc = None
+    _ENV = None
+    return {"signed_in": claude_signed_in(b), "claude_bin": b, "terminal": fell_back,
+            "why": "The browser sign-in did not finish in time. Try again, and click Allow in the browser tab that opens."}
+
+
 def environment():
     """What this machine has, as facts, checked once per process.
 
@@ -139,6 +223,16 @@ def environment():
     for name, exe in (("git", "git"), ("Node", "node")):
         (present if shutil.which(exe) and _runs([exe, "--version"]) else missing).append(name)
     h = host()
+    cb, signed = "", False
+    if h == "claude":
+        # codegen's fast engine is the person's own Claude CLI; without a
+        # sign-in it can only write skeletons
+        cb = claude_bin()
+        signed = claude_signed_in(cb)
+        if not cb:
+            missing.append("Claude CLI")
+        else:
+            (present if signed else missing).append("Claude sign-in")
     if h == "codex":
         cfg = os.path.join(USER_HOME, ".codex", "config.toml")
         try:
@@ -150,7 +244,8 @@ def environment():
         line = "Environment: MISSING " + ", ".join(missing) + ". Present: " + ", ".join(present) + "."
     else:
         line = "Environment: " + ", ".join(present) + " - all present."
-    _ENV = {"present": present, "missing": missing, "python": py, "host": h or "unknown", "line": line}
+    _ENV = {"present": present, "missing": missing, "python": py, "host": h or "unknown", "line": line,
+            "claude_bin": cb, "claude_signed_in": signed}
     return _ENV
 
 
@@ -627,7 +722,9 @@ OPEN_NOTE = (
 ENV_NOTE = (
     "This line IS the environment check - never run one yourself. Nothing missing: say nothing about "
     "the environment. Something missing: one sentence naming it and offering vf_install (Node only "
-    "matters once a front end is being built).")
+    "matters once a front end is being built). 'Claude sign-in' missing means codegen can only write "
+    "skeletons: offer vf_pane_login in one sentence - one click, a browser tab opens, they press Allow. "
+    "Never tell the person to run a terminal command for it.")
 
 TOOLS = [
     {
@@ -688,6 +785,18 @@ TOOLS = [
             "type": "string", "enum": ["acceptEdits", "bypassPermissions"],
             "description": "acceptEdits (default) or bypassPermissions."}}},
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "vf_pane_login",
+        "title": "Sign the Claude CLI in",
+        "description": (
+            "Sign this machine's Claude CLI in so codegen's fast engine works (without it codegen writes "
+            "skeletons only). Runs the CLI's own sign-in, which opens a browser tab; the person presses "
+            "Allow there and this tool waits, then confirms. Nothing is typed anywhere. Call it when the "
+            "environment line says 'Claude sign-in' is missing and the person said yes to the one-sentence "
+            "offer, or when they ask. Claude Code only."),
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
     },
     {
         "name": "vf_portal_status",
@@ -804,6 +913,15 @@ def call_tool(params):
         if name == "vf_pane_stop":
             r = stop_panes(args.get("project_dir"))
             return text("Stopped the viewer for: " + ", ".join(r["stopped"]) if r["stopped"] else "No viewer was running.", r)
+        if name == "vf_pane_login":
+            if host() and host() != "claude":
+                return text_result("Only Claude Code has a Claude CLI to sign in; this does not apply here.", {"signed_in": False, "applies": False})
+            r = claude_login()
+            if r.get("signed_in"):
+                msg = "Already signed in." if r.get("already") else "Signed in. Codegen's fast engine works from now on."
+            else:
+                msg = r.get("why", "Not signed in.")
+            return text_result(msg, r)
         if name == "vf_pane_preapprove":
             r = preapprove(str(args.get("mode") or "acceptEdits"))
             if r.get("applied"):
