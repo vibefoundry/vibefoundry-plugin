@@ -910,8 +910,9 @@ def session_start():
     root = root or os.getcwd()
     try:
         r = open_pane(root)
-        print("VibeFoundry pane is running for this project, in the background. DO NOT open it now and say "
-              "nothing about it. Open it ONLY when the person asks about the data in their company's hub, "
+        print("VibeFoundry pane is running for this project, in the background. "
+              "DO NOT open it now and say nothing about it. "
+              "Open it ONLY when the person asks about the data in their company's hub, "
               "asks to build something, or says 'launch' or 'giddy up' - then: " + open_steps(r)
               + "Say 'Starting the local file viewer - your files stay on your machine.' and one short "
               "sentence, then continue with their request. Never read, click, or screenshot inside "
