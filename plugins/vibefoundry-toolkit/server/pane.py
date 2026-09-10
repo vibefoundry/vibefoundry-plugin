@@ -37,9 +37,10 @@ import tempfile
 import time
 import urllib.error
 import urllib.parse
+import zlib
 import urllib.request
 
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 ORIGIN = os.environ.get("VF_ORIGIN", "https://mcp-dev.vibefoundry.ai").rstrip("/")
 WIN = os.name == "nt"
 USER_HOME = os.path.expanduser("~")
@@ -151,6 +152,91 @@ def environment():
         line = "Environment: " + ", ".join(present) + " - all present."
     _ENV = {"present": present, "missing": missing, "python": py, "host": h or "unknown", "line": line}
     return _ENV
+
+
+# ------------------------------------------------------------- permissions --
+
+SETTINGS = os.path.join(USER_HOME, ".claude", "settings.json")
+ASKED = os.path.join(HOME, "preapprove_offered")
+BUILD_COMMANDS = ["python", "python3", "py", "pip", "pip3", "conda", "npm", "npx", "node", "git",
+                  "mkdir", "ls", "dir", "cat", "cd", "unzip", "curl"]
+
+
+def plugin_name():
+    """The plugin this server ships in, read from its own manifest two folders
+    up - so the stamped clones (pronghorn-ai, diageo-ai-foundry) name their
+    own servers without anyone typing them."""
+    try:
+        mp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".claude-plugin", "plugin.json")
+        return str(json.load(open(mp, encoding="utf-8")).get("name") or "vibefoundry-toolkit")
+    except Exception:
+        return "vibefoundry-toolkit"
+
+
+def permission_rules():
+    n = plugin_name()
+    return ["mcp__plugin_%s_vibefoundry" % n, "mcp__plugin_%s_vibefoundry-pane" % n] + \
+           ["Bash(%s:*)" % c for c in BUILD_COMMANDS]
+
+
+def read_settings():
+    try:
+        d = json.load(open(SETTINGS, encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def permissions_state():
+    """What Claude will do before each tool on this machine, as a fact for the
+    hook context and the open result. `offer` is true exactly once per
+    machine: the launch skill asks that one time, and never nags."""
+    if host() != "claude":
+        return None
+    perms = read_settings().get("permissions") or {}
+    mode = str(perms.get("defaultMode") or "default")
+    allow = perms.get("allow") if isinstance(perms.get("allow"), list) else []
+    servers = permission_rules()[:2]
+    pre = mode == "bypassPermissions" or all(r in allow for r in servers)
+    offer = not pre and not os.path.isfile(ASKED)
+    if offer:
+        try:
+            os.makedirs(HOME, exist_ok=True)
+            open(ASKED, "w").write(time.strftime("%Y-%m-%dT%H:%M:%S"))
+        except Exception:
+            pass
+    return {"mode": mode, "preapproved": pre, "offer": offer}
+
+
+def preapprove(mode):
+    """Merge the pre-approval into the person's OWN settings file, once they
+    said yes: the mode, the two rules for this plugin's servers, and the
+    build commands. Other keys are untouched, nothing is added twice, and a
+    machine already in bypass mode is left alone. Never called from the
+    hook - only from a tool call the person approves."""
+    if host() != "claude":
+        return {"applied": False, "why": "Only Claude Code keeps these settings. Codex asks in its own way and this does not apply there."}
+    mode = mode if mode in ("acceptEdits", "bypassPermissions") else "acceptEdits"
+    cfg = read_settings()
+    perms = cfg.get("permissions") if isinstance(cfg.get("permissions"), dict) else {}
+    cur = str(perms.get("defaultMode") or "default")
+    if cur == "bypassPermissions":
+        return {"applied": False, "mode": cur, "why": "This machine already runs in bypass mode: nothing asks, nothing to add."}
+    allow = [x for x in (perms.get("allow") or []) if isinstance(x, str)]
+    added = [r for r in permission_rules() if r not in allow]
+    changed = bool(added) or cur != mode
+    if not changed:
+        return {"applied": False, "mode": cur, "why": "Already pre-approved; nothing changed."}
+    perms["defaultMode"] = mode
+    perms["allow"] = allow + added
+    cfg["permissions"] = perms
+    os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
+    tmp = SETTINGS + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, SETTINGS)
+    return {"applied": True, "mode": mode, "added": added, "file": SETTINGS}
 
 
 # --------------------------------------------------------------------- tap --
@@ -287,8 +373,12 @@ def start_tap(root):
         kw["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kw["start_new_session"] = True
+    # A port derived from the project path, so the viewer comes back on the
+    # same address after a restart and the launch.json entry stops changing.
+    # The tap falls back to a free port when this one is taken.
+    port = 20000 + zlib.crc32(root.encode("utf-8")) % 20000
     try:
-        child = subprocess.Popen([py, TAP, root, "--announce", ready], **kw)
+        child = subprocess.Popen([py, TAP, root, "--announce", ready, "--port", str(port)], **kw)
     except Exception as e:
         raise RuntimeError("Could not start the viewer: %s" % e)
     deadline = time.time() + READY_TIMEOUT
@@ -407,9 +497,19 @@ def open_pane(project_dir):
             write_registry(reg)
             r = {"project_dir": root, "url": t["url"], "reused": False}
         r["preview"] = write_launch_entry(root, r["url"])
+        r["permissions"] = permissions_state()
         return r
     finally:
         unlock()
+
+
+def perms_line(r):
+    p = r.get("permissions")
+    if not p or p.get("preapproved") or not p.get("offer"):
+        return ""
+    return ("\nPermissions: not pre-approved - Claude asks before every tool and command on this machine. "
+            "Offer ONCE, in one sentence: 'Claude will ask before every tool and command. Want me to pre-approve "
+            "the VibeFoundry tools and the build commands?' Yes: call vf_pane_preapprove. No: never raise it again.")
 
 
 def open_steps(r):
@@ -575,6 +675,21 @@ TOOLS = [
     # used to assemble a curl by hand from an old URL, get 403 'bad token',
     # and tell a signed-in person they were signed out.
     {
+        "name": "vf_pane_preapprove",
+        "title": "Stop the permission prompts",
+        "description": (
+            "Pre-approve the VibeFoundry tools and the usual build commands in the person's OWN Claude "
+            "settings (user scope), so Claude stops asking before every tool call. Call it ONLY after the "
+            "person said yes to the one-sentence offer; never on your own. mode 'acceptEdits' (default) "
+            "pre-approves file edits, both VibeFoundry servers and the build commands and still asks for "
+            "anything else; 'bypassPermissions' stops every prompt. Takes effect from the next session. "
+            "Claude Code only; on Codex it says it does not apply."),
+        "inputSchema": {"type": "object", "properties": {"mode": {
+            "type": "string", "enum": ["acceptEdits", "bypassPermissions"],
+            "description": "acceptEdits (default) or bypassPermissions."}}},
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
         "name": "vf_portal_status",
         "title": "Is the company portal signed in?",
         "description": ("Whether the running viewer holds a portal session for this project, and for whom. "
@@ -658,7 +773,9 @@ INSTRUCTIONS = (
     "and on Codex its sandbox network - and hands the result over as an 'Environment:' line in the "
     "session-start hook context and in vf_pane_open / vf_pane_status. Read that line; never run a "
     "check yourself. Nothing missing: say nothing about it. Something missing: one sentence naming "
-    "it and offering vf_install.")
+    "it and offering vf_install. PERMISSIONS: when the hook context or vf_pane_open says the machine is "
+    "not pre-approved, offer ONCE in one sentence to pre-approve the VibeFoundry tools and the build "
+    "commands; yes means vf_pane_preapprove, no means never raise it again. Never call it unasked.")
 
 
 def text(s, data):
@@ -677,7 +794,7 @@ def call_tool(params):
             r = open_pane(args.get("project_dir"))
             r["environment"] = environment()
             return text(("The viewer for this folder is already running. " if r["reused"] else "Pane ready. ")
-                        + open_steps(r) + OPEN_NOTE + "\nURL: " + r["url"] + "\n" + r["environment"]["line"] + " " + ENV_NOTE, r)
+                        + open_steps(r) + OPEN_NOTE + "\nURL: " + r["url"] + "\n" + r["environment"]["line"] + " " + ENV_NOTE + perms_line(r), r)
         if name == "vf_pane_status":
             r = status_panes()
             r["environment"] = environment()
@@ -686,6 +803,14 @@ def call_tool(params):
         if name == "vf_pane_stop":
             r = stop_panes(args.get("project_dir"))
             return text("Stopped the viewer for: " + ", ".join(r["stopped"]) if r["stopped"] else "No viewer was running.", r)
+        if name == "vf_pane_preapprove":
+            r = preapprove(str(args.get("mode") or "acceptEdits"))
+            if r.get("applied"):
+                msg = ("Done: %s mode, %d rule(s) added to the person's own settings. It takes effect when "
+                       "Claude is fully quit and reopened." % (r["mode"], len(r["added"])))
+            else:
+                msg = r.get("why", "Nothing changed.")
+            return text_result(msg, r)
         pd = args.get("project_dir")
         if name == "vf_portal_status":
             code, body = tap_call(pd, "/portal/status")
@@ -788,7 +913,7 @@ def session_start():
               + "Say 'Starting the local file viewer - your files stay on your machine.' and one short "
               "sentence, then continue with the user's request. Never read, click, or screenshot inside "
               "it, never report ports or process ids, and never launch the viewer with a shell command.\nURL: "
-              + r["url"] + "\n" + environment()["line"] + " " + ENV_NOTE)
+              + r["url"] + "\n" + environment()["line"] + " " + ENV_NOTE + perms_line(r))
     except Exception as e:
         log("session start:", e)
         print("The VibeFoundry pane could not start on its own (" + str(e)[:120] + "). When the user wants "

@@ -15,7 +15,9 @@ The person wants to start. This is the whole script. Do not add to it, and do no
 
 4. **The environment is already checked.** The hook context and `vf_pane_open` carry an `Environment:` line written by the pane server. Nothing missing: say nothing about the environment. Something missing: one sentence naming it and offering `vf_install`. Node only matters once a front end is being built, so stay silent about it until then. Never run a check yourself.
 
-5. **Say one line, then stop and wait.**
+5. **Permissions, once per machine.** If the hook context or `vf_pane_open` says the machine is not pre-approved, add one sentence before the closing line: *Claude will ask before every tool and command. Want me to pre-approve the VibeFoundry tools and the build commands?* Yes means `vf_pane_preapprove`; no means never raise it again. If it says nothing about permissions, say nothing.
+
+6. **Say one line, then stop and wait.**
    - Not signed in: *Sign in on the Portal tab in the viewer, pick your hub there, then tell me what you want built.*
    - Signed in: *Signed in to <hub>. What do you want built?*
 
