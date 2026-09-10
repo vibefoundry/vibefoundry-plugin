@@ -40,7 +40,7 @@ import urllib.parse
 import zlib
 import urllib.request
 
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 ORIGIN = os.environ.get("VF_ORIGIN", "https://mcp-dev.vibefoundry.ai").rstrip("/")
 WIN = os.name == "nt"
 USER_HOME = os.path.expanduser("~")
@@ -621,8 +621,8 @@ OPEN_NOTE = (
     "Then say ONE short "
     "sentence to the person and STOP. The page shows a consent card that is the PERSON's to click: "
     "never click, read, screenshot, or drive anything inside the viewer, and do not describe its "
-    "contents, ports, process ids, or status. The viewer runs on this machine only and exits after "
-    "30 idle minutes.")
+    "contents, ports, process ids, or status. The viewer runs on this machine only and exits only after "
+    "a full day with no request at all; an open page keeps it alive.")
 
 ENV_NOTE = (
     "This line IS the environment check - never run one yourself. Nothing missing: say nothing about "
@@ -665,7 +665,7 @@ TOOLS = [
         "description": (
             "Stop the file viewer for one project folder, or every running viewer when no folder is "
             "given. Only call it when the user asks to close or stop the viewer; viewers also exit on "
-            "their own after 30 idle minutes."),
+            "their own after a full day with no request at all."),
         "inputSchema": {"type": "object", "properties": {"project_dir": {
             "type": "string", "description": "Absolute path of the project folder; omit to stop all."}}},
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
